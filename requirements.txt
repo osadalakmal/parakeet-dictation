@@ -1,0 +1,7 @@
+pyaudio
+pynput
+numpy
+faster-whisper
+rumps
+pyobjc
+py2app
