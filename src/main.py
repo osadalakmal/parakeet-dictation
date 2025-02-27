@@ -80,75 +80,32 @@ class WhisperDictationApp(rumps.App):
         self.is_recording_with_key63 = False
         
         def on_press(key):
-            # Print all key presses for debugging
-            print(f"DEBUG: Key pressed: {key} (type: {type(key)})")
-            
-            # Check if it has a virtual key code
-            if hasattr(key, 'vk'):
-                print(f"DEBUG: Key with vk={key.vk} pressed")
-                
-                # Skip key 63 here since we'll handle it in on_release
-                if key.vk != self.trigger_key and not self.recording:
-                    # Handle other keys with vk codes
-                    # Common virtual key codes: Space=49, Tab=48, Command=55, Option=58, Control=59
-                    if key.vk == 49 or key.vk == 55:  # Space or Command
-                        print(f"Alternative key (vk={key.vk}) pressed - Starting recording")
-                        self.start_recording()
-            
-            # Also check for special keys like F-keys
-            try:
-                if key in [Key.f12, Key.f13, Key.f17, Key.f18, Key.cmd, Key.space] and not self.recording:
-                    print(f"Special key {key} pressed - Starting recording")
-                    self.start_recording()
-            except:
-                pass
+            # Removed logging for every key press; log only when target key is pressed
+            if hasattr(key, 'vk') and key.vk == self.trigger_key:
+                print(f"DEBUG: Target key (vk={key.vk}) pressed")
         
         def on_release(key):
-            # Print key releases for debugging
             if hasattr(key, 'vk'):
                 print(f"DEBUG: Key with vk={key.vk} released")
-                
-                # Special handling for key 63 (Globe/Fn key)
                 if key.vk == self.trigger_key:
                     if not self.recording and not self.is_recording_with_key63:
-                        # Start recording on first release
                         print(f"TARGET KEY RELEASED! Globe/Fn key (vk={key.vk}) released - STARTING recording")
                         self.is_recording_with_key63 = True
                         self.start_recording()
                     elif self.recording and self.is_recording_with_key63:
-                        # Stop recording on second release
                         print(f"TARGET KEY RELEASED AGAIN! Globe/Fn key (vk={key.vk}) released - STOPPING recording")
                         self.is_recording_with_key63 = False
                         self.stop_recording()
-                
-                # Handle other keys normally
-                elif self.recording:
-                    if key.vk == 49 or key.vk == 55:  # Space or Command
-                        print(f"Alternative key (vk={key.vk}) released - Stopping recording")
-                        self.stop_recording()
-            
-            # Also check for special keys
-            try:
-                if key in [Key.f12, Key.f13, Key.f17, Key.f18, Key.cmd, Key.space] and self.recording:
-                    print(f"Special key {key} released - Stopping recording")
-                    self.stop_recording()
-            except:
-                pass
         
-        # Start the listener with full debugging
         try:
             with keyboard.Listener(on_press=on_press, on_release=on_release) as listener:
                 print(f"Keyboard listener started - listening for key events")
                 print(f"Target key is Globe/Fn key (vk={self.trigger_key})")
-                print(f"Alternative keys also enabled: Space (vk=49), Command (vk=55), F12, F13")
-                print(f"Press any of these keys to start recording, release to stop")
-                print(f"DEBUG MODE: All key presses will be logged for debugging purposes")
+                print(f"Press and release the target key to control recording")
                 listener.join()
         except Exception as e:
             print(f"Error with keyboard listener: {e}")
-            print("You may need to grant accessibility permissions in System Preferences")
-            print("Go to System Preferences → Privacy & Security → Privacy → Accessibility")
-            print("and add Terminal or iTerm to the list of apps that can control your computer")
+            print("Please check accessibility permissions in System Preferences")
     
     @rumps.clicked("Start Recording")
     def start_recording_menu(self, _):
