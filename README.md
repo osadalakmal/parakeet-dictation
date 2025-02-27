@@ -63,8 +63,10 @@ You can also interact with the app through the menu bar icon:
 ## Permissions
 
 The app requires the following permissions:
-- Microphone access (to record your speech)
-- Accessibility access (to simulate keyboard presses for pasting)
+- Microphone access (to record your speech).  
+  Go to System Preferences → Security & Privacy → Privacy → Microphone and add your Terminal or the app.
+- Accessibility access (to simulate keyboard presses for pasting).  
+  Go to System Preferences → Security & Privacy → Privacy → Accessibility and add your Terminal or the app.
 
 ## Requirements
 
