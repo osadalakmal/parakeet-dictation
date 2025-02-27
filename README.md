@@ -29,21 +29,21 @@ brew install portaudio
 python src/main.py
 ```
 
-### Building the macOS App
+### Running the Script in the Background
 
-To build a standalone macOS application:
+To run the script in the background:
 
 1. Install all dependencies:
 ```
 pip install -r requirements.txt
 ```
 
-2. Build the app:
+2. Run the script in the background:
 ```
-python setup.py py2app
+nohup ./run.sh >/dev/null 2>&1 &  
 ```
 
-3. The app will be created in the `dist` folder. You can then move it to your Applications folder.
+3. The script will continue running in the background. You can then use the app as described in the Usage section.
 
 ## Usage
 
