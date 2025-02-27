@@ -1,5 +1,7 @@
 # Whisper Dictation
 
+**Note: This application is for macOS only.**
+
 A macOS application that converts speech to text using OpenAI's Whisper model running locally. Press the Globe/Function key to start recording, press it again to stop recording, transcribe, and paste text at your current cursor position.
 
 ## Features
