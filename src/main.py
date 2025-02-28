@@ -36,8 +36,9 @@ class WhisperDictationApp(rumps.App):
         # Status item
         self.status_item = rumps.MenuItem("Status: Ready")
         
-        # Add menu items
-        self.menu = ["Start/Stop Listening", None, self.status_item]
+        # Add menu items - use a single menu item for toggling recording
+        self.recording_menu_item = rumps.MenuItem("Start Recording")
+        self.menu = [self.recording_menu_item, None, self.status_item]
         
         # Recording state
         self.recording = False
@@ -150,15 +151,14 @@ class WhisperDictationApp(rumps.App):
             print(f"Error with keyboard listener: {e}")
             print("Please check accessibility permissions in System Preferences")
     
-    @rumps.clicked("Start Recording")
-    def start_recording_menu(self, _):
+    @rumps.clicked("Start Recording")  # This will be matched by title
+    def toggle_recording(self, sender):
         if not self.recording:
             self.start_recording()
-    
-    @rumps.clicked("Stop Recording")
-    def stop_recording_menu(self, _):
-        if self.recording:
+            sender.title = "Stop Recording"
+        else:
             self.stop_recording()
+            sender.title = "Start Recording"
     
     def start_recording(self):
         if not hasattr(self, 'model') or self.model is None:
