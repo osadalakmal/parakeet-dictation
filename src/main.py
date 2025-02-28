@@ -11,28 +11,39 @@ import rumps
 from pynput import keyboard
 from pynput.keyboard import Key, Controller
 import faster_whisper
+import signal
+
+# Set up a global flag for handling SIGINT
+exit_flag = False
+
+def signal_handler(sig, frame):
+    """Global signal handler for graceful shutdown"""
+    global exit_flag
+    print("\nShutdown signal received, exiting gracefully...")
+    exit_flag = True
+    # Try to force exit if the app doesn't respond quickly
+    import threading
+    threading.Timer(2.0, lambda: os._exit(0)).start()
+
+# Register the global signal handlers
+signal.signal(signal.SIGINT, signal_handler)
+signal.signal(signal.SIGTERM, signal_handler)
 
 class WhisperDictationApp(rumps.App):
     def __init__(self):
         super(WhisperDictationApp, self).__init__("🎙️", quit_button=rumps.MenuItem("Quit"))
         
-        # Add menu items
-        self.menu = ["Start/Stop Listening", None, "Settings"]
+        # Status item
+        self.status_item = rumps.MenuItem("Status: Ready")
         
-        # Register signal handlers for graceful shutdown
-        import signal
-        signal.signal(signal.SIGINT, self.handle_shutdown)
-        signal.signal(signal.SIGTERM, self.handle_shutdown)
+        # Add menu items
+        self.menu = ["Start/Stop Listening", None, self.status_item]
         
         # Recording state
         self.recording = False
         self.audio = pyaudio.PyAudio()
         self.frames = []
         self.keyboard_controller = Controller()
-        
-        # Status item
-        self.status_item = rumps.MenuItem("Status: Ready")
-        self.menu.insert_before("Settings", self.status_item)
         
         # Initialize Whisper model
         self.model = None
@@ -52,9 +63,41 @@ class WhisperDictationApp(rumps.App):
         # Show initial message
         print("Started WhisperDictation app. Look for 🎙️ in your menu bar.")
         print("Press and hold the Globe/Fn key (vk=63) to record. Release to transcribe.")
+        print("Press Ctrl+C to quit the application.")
         print("You may need to grant this app accessibility permissions in System Preferences.")
         print("Go to System Preferences → Security & Privacy → Privacy → Accessibility")
         print("and add your terminal or the built app to the list.")
+        
+        # Start a watchdog thread to check for exit flag
+        self.watchdog = threading.Thread(target=self.check_exit_flag, daemon=True)
+        self.watchdog.start()
+    
+    def check_exit_flag(self):
+        """Monitor the exit flag and terminate the app when set"""
+        while True:
+            if exit_flag:
+                print("Watchdog detected exit flag, shutting down...")
+                self.cleanup()
+                rumps.quit_application()
+                os._exit(0)
+                break
+            time.sleep(0.5)
+    
+    def cleanup(self):
+        """Clean up resources before exiting"""
+        print("Cleaning up resources...")
+        # Stop recording if in progress
+        if self.recording:
+            self.recording = False
+            if hasattr(self, 'recording_thread') and self.recording_thread.is_alive():
+                self.recording_thread.join(timeout=1.0)
+        
+        # Close PyAudio
+        if hasattr(self, 'audio'):
+            try:
+                self.audio.terminate()
+            except:
+                pass
     
     def load_model(self):
         self.title = "🎙️ (Loading...)"
@@ -231,30 +274,14 @@ class WhisperDictationApp(rumps.App):
         self.keyboard_controller.release(Key.cmd)
         print("Text pasted successfully")
     
-    @rumps.clicked("Settings")
-    def settings(self, _):
-        response = rumps.Window(
-            message="Whisper Dictation Settings",
-            title="Settings",
-            default_text="No settings available yet",
-            ok="OK",
-            cancel=None
-        ).run()
-    
     def handle_shutdown(self, signal, frame):
-        """Handle graceful shutdown when Ctrl+C is pressed"""
-        print("\nShutting down Whisper Dictation...")
-        
-        # Stop recording if in progress
-        if self.recording:
-            self.stop_recording()
-        
-        # Close PyAudio
-        if hasattr(self, 'audio'):
-            self.audio.terminate()
-        
-        print("Goodbye!")
-        rumps.quit_application()
+        """This method is no longer used with the global handler approach"""
+        pass
 
+# Wrap the main execution in a try-except to ensure clean exit
 if __name__ == "__main__":
-    WhisperDictationApp().run()
+    try:
+        WhisperDictationApp().run()
+    except KeyboardInterrupt:
+        print("\nKeyboard interrupt received, exiting...")
+        os._exit(0)
