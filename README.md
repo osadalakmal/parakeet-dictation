@@ -42,7 +42,7 @@ pip install -r requirements.txt
 
 2. Run the script in the background:
 ```
-nohup ./run.sh >/dev/null 2>&1 &  
+nohup ./run.sh >/dev/null 2>&1 & disown
 ```
 
 3. The script will continue running in the background. You can then use the app as described in the Usage section.
