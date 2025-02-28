@@ -72,3 +72,16 @@ The app requires the following permissions:
 
 - macOS 10.14 or later
 - Microphone
+
+## Troubleshooting
+
+If something goes wrong or you need to stop the background process, you can kill it by running one of the following commands in your Terminal:
+
+1. List the running process(es):
+```
+ps aux | grep 'src/main.py'
+```
+2. Kill the process by its PID:
+```
+kill -9 <PID>
+```
