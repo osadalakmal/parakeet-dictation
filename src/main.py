@@ -104,7 +104,7 @@ class WhisperDictationApp(rumps.App):
         self.title = "🎙️ (Loading...)"
         self.status_item.title = "Status: Loading Whisper model..."
         try:
-            self.model = faster_whisper.WhisperModel("small", device="cpu", compute_type="int8")
+            self.model = faster_whisper.WhisperModel("small.en")
             self.title = "🎙️"
             self.status_item.title = "Status: Ready"
             print("Whisper model loaded successfully!")
