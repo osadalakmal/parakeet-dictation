@@ -262,17 +262,10 @@ class WhisperDictationApp(rumps.App):
             os.unlink(temp_filename)
     
     def insert_text(self, text):
-        # Use pbpaste/pbcopy to insert text at cursor position
-        process = subprocess.Popen('pbcopy', env={'LANG': 'en_US.UTF-8'}, stdin=subprocess.PIPE)
-        process.communicate(text.encode('utf-8'))
-        
-        # Simulate Command+V to paste
-        print("Pasting text at cursor position...")
-        self.keyboard_controller.press(Key.cmd)
-        self.keyboard_controller.press('v')
-        self.keyboard_controller.release('v')
-        self.keyboard_controller.release(Key.cmd)
-        print("Text pasted successfully")
+        # Type text at cursor position without altering the clipboard
+        print("Typing text at cursor position...")
+        self.keyboard_controller.type(text)
+        print("Text typed successfully")
     
     def handle_shutdown(self, signal, frame):
         """This method is no longer used with the global handler approach"""
