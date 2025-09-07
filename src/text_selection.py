@@ -3,6 +3,9 @@ import pyperclip
 import time
 from AppKit import NSPasteboard, NSStringPboardType
 from pynput.keyboard import Key, Controller
+from logger_config import setup_logging
+
+logger = setup_logging()
 
 
 class TextSelection:
@@ -32,7 +35,7 @@ class TextSelection:
             
             # Get the copied text
             selected_text = pyperclip.paste()
-            print(f"DEBUG: Copied text: {selected_text}")
+            logger.debug(f"Copied text: {selected_text}")
             
             # Restore original clipboard content
             pyperclip.copy(original_clipboard)
@@ -44,7 +47,7 @@ class TextSelection:
             return None
             
         except Exception as e:
-            print(f"Error getting selected text: {e}")
+            logger.error(f"Error getting selected text: {e}")
             return None
     
     def replace_selected_text(self, new_text):
@@ -58,7 +61,7 @@ class TextSelection:
             return True
             
         except Exception as e:
-            print(f"Error replacing selected text: {e}")
+            logger.error(f"Error replacing selected text: {e}")
             return False
     
     def select_all_and_replace(self, new_text):
@@ -79,7 +82,7 @@ class TextSelection:
             return True
             
         except Exception as e:
-            print(f"Error in select all and replace: {e}")
+            logger.error(f"Error in select all and replace: {e}")
             return False
     
     def get_selected_text_native(self):
@@ -115,5 +118,5 @@ class TextSelection:
             return selected_text.strip() if selected_text else None
             
         except Exception as e:
-            print(f"Error with native text selection: {e}")
+            logger.error(f"Error with native text selection: {e}")
             return None

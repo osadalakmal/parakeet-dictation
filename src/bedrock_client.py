@@ -3,9 +3,11 @@ import boto3
 import json
 import os
 from dotenv import load_dotenv
+from logger_config import setup_logging
 
 # Load environment variables
 load_dotenv()
+logger = setup_logging()
 
 class BedrockClient:
     def __init__(self):
@@ -19,9 +21,9 @@ class BedrockClient:
                 'bedrock-runtime',
                 region_name=self.region_name,
             )
-            print(f"Bedrock client initialized with model: {self.model_id}")
+            logger.info(f"Bedrock client initialized with model: {self.model_id}")
         except Exception as e:
-            print(f"Error initializing Bedrock client: {e}")
+            logger.error(f"Error initializing Bedrock client: {e}")
             self.client = None
     
     def enhance_text(self, transcribed_text, selected_text):
@@ -67,13 +69,13 @@ Please modify the selected text according to the voice instruction. Return only 
             # Extract the generated text
             if 'content' in response_body and len(response_body['content']) > 0:
                 enhanced_text = response_body['content'][0]['text'].strip()
-                print(f"Bedrock response: {enhanced_text}")
+                logger.debug(f"Bedrock response: {enhanced_text}")
                 return enhanced_text
             else:
                 raise Exception("No content in Bedrock response")
                 
         except Exception as e:
-            print(f"Error calling Bedrock: {e}")
+            logger.error(f"Error calling Bedrock: {e}")
             raise
     
     def test_connection(self):

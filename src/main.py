@@ -13,6 +13,9 @@ import faster_whisper
 import signal
 from text_selection import TextSelection
 from bedrock_client import BedrockClient
+from logger_config import setup_logging
+
+logger = setup_logging()
 
 # Set up a global flag for handling SIGINT
 exit_flag = False
@@ -20,12 +23,12 @@ exit_flag = False
 def signal_handler(sig, frame):
     """Global signal handler for graceful shutdown"""
     global exit_flag
-    print("\nShutdown signal received, exiting gracefully...")
+    logger.info("Shutdown signal received, exiting gracefully...")
     exit_flag = True
     # Try to force exit if the app doesn't respond quickly
     threading.Timer(2.0, lambda: os._exit(0)).start()
 
-# Register the global signal handlers
+# Set up graceful shutdown handling for interrupt and termination signals
 signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
@@ -68,18 +71,18 @@ class WhisperDictationApp(rumps.App):
         self.setup_global_monitor()
         
         # Show initial message
-        print("Started WhisperDictation app. Look for 🎙️ in your menu bar.")
-        print("Press and hold the Globe/Fn key (vk=63) to record. Release to transcribe.")
-        print("Press Ctrl+C to quit the application.")
-        print("You may need to grant this app accessibility permissions in System Preferences.")
-        print("Go to System Preferences → Security & Privacy → Privacy → Accessibility")
-        print("and add your terminal or the built app to the list.")
+        logger.info("Started WhisperDictation app. Look for 🎙️ in your menu bar.")
+        logger.info("Press and hold the Globe/Fn key (vk=63) to record. Release to transcribe.")
+        logger.info("Press Ctrl+C to quit the application.")
+        logger.info("You may need to grant this app accessibility permissions in System Preferences.")
+        logger.info("Go to System Preferences → Security & Privacy → Privacy → Accessibility")
+        logger.info("and add your terminal or the built app to the list.")
         
         # Test Bedrock connection
         if self.bedrock_client.is_available():
-            print("✓ Bedrock client initialized successfully")
+            logger.info("✓ Bedrock client initialized successfully")
         else:
-            print("⚠ Bedrock client not available - text enhancement features disabled")
+            logger.warning("⚠ Bedrock client not available - text enhancement features disabled")
         
         # Start a watchdog thread to check for exit flag
         self.watchdog = threading.Thread(target=self.check_exit_flag, daemon=True)
@@ -89,7 +92,7 @@ class WhisperDictationApp(rumps.App):
         """Monitor the exit flag and terminate the app when set"""
         while True:
             if exit_flag:
-                print("Watchdog detected exit flag, shutting down...")
+                logger.info("Watchdog detected exit flag, shutting down...")
                 self.cleanup()
                 rumps.quit_application()
                 os._exit(0)
@@ -98,7 +101,7 @@ class WhisperDictationApp(rumps.App):
     
     def cleanup(self):
         """Clean up resources before exiting"""
-        print("Cleaning up resources...")
+        logger.info("Cleaning up resources...")
         # Stop recording if in progress
         if self.recording:
             self.recording = False
@@ -119,11 +122,11 @@ class WhisperDictationApp(rumps.App):
             self.model = faster_whisper.WhisperModel("small.en")
             self.title = "🎙️"
             self.status_item.title = "Status: Ready"
-            print("Whisper model loaded successfully!")
+            logger.info("Whisper model loaded successfully!")
         except Exception as e:
             self.title = "🎙️ (Error)"
             self.status_item.title = "Status: Error loading model"
-            print(f"Error loading model: {e}")
+            logger.error(f"Error loading model: {e}")
     
     def setup_global_monitor(self):
         # Create a separate thread to monitor for global key events
@@ -138,30 +141,30 @@ class WhisperDictationApp(rumps.App):
         def on_press(key):
             # Removed logging for every key press; log only when target key is pressed
             if hasattr(key, 'vk') and key.vk == self.trigger_key:
-                print(f"DEBUG: Target key (vk={key.vk}) pressed")
+                logger.debug(f"Target key (vk={key.vk}) pressed")
         
         def on_release(key):
             if hasattr(key, 'vk'):
-                print(f"DEBUG: Key with vk={key.vk} released")
+                logger.debug(f"Key with vk={key.vk} released")
                 if key.vk == self.trigger_key:
                     if not self.recording and not self.is_recording_with_key63:
-                        print(f"TARGET KEY RELEASED! Globe/Fn key (vk={key.vk}) released - STARTING recording")
+                        logger.debug(f"Globe/Fn key (vk={key.vk}) released - STARTING recording")
                         self.is_recording_with_key63 = True
                         self.start_recording()
                     elif self.recording and self.is_recording_with_key63:
-                        print(f"TARGET KEY RELEASED AGAIN! Globe/Fn key (vk={key.vk}) released - STOPPING recording")
+                        logger.debug(f"Globe/Fn key (vk={key.vk}) released - STOPPING recording")
                         self.is_recording_with_key63 = False
                         self.stop_recording()
         
         try:
             with keyboard.Listener(on_press=on_press, on_release=on_release) as listener:
-                print(f"Keyboard listener started - listening for key events")
-                print(f"Target key is Globe/Fn key (vk={self.trigger_key})")
-                print(f"Press and release the target key to control recording")
+                logger.debug(f"Keyboard listener started - listening for key events")
+                logger.debug(f"Target key is Globe/Fn key (vk={self.trigger_key})")
+                logger.debug(f"Press and release the target key to control recording")
                 listener.join()
         except Exception as e:
-            print(f"Error with keyboard listener: {e}")
-            print("Please check accessibility permissions in System Preferences")
+            logger.error(f"Error with keyboard listener: {e}")
+            logger.error("Please check accessibility permissions in System Preferences")
     
     @rumps.clicked("Start Recording")  # This will be matched by title
     def toggle_recording(self, sender):
@@ -174,7 +177,7 @@ class WhisperDictationApp(rumps.App):
     
     def start_recording(self):
         if not hasattr(self, 'model') or self.model is None:
-            print("Model not loaded. Please wait for the model to finish loading.")
+            logger.warning("Model not loaded. Please wait for the model to finish loading.")
             self.status_item.title = "Status: Waiting for model to load"
             return
             
@@ -184,7 +187,7 @@ class WhisperDictationApp(rumps.App):
         # Update UI
         self.title = "🎙️ (Recording)"
         self.status_item.title = "Status: Recording..."
-        print("Recording started. Speak now...")
+        logger.info("Recording started. Speak now...")
         
         # Start recording thread
         self.recording_thread = threading.Thread(target=self.record_audio)
@@ -198,7 +201,7 @@ class WhisperDictationApp(rumps.App):
         # Update UI
         self.title = "🎙️ (Transcribing)"
         self.status_item.title = "Status: Transcribing..."
-        print("Recording stopped. Transcribing...")
+        logger.info("Recording stopped. Transcribing...")
         
         # Process in background
         transcribe_thread = threading.Thread(target=self.process_recording)
@@ -209,7 +212,7 @@ class WhisperDictationApp(rumps.App):
         try:
             self.transcribe_audio()
         except Exception as e:
-            print(f"Error during transcription: {e}")
+            logger.error(f"Error during transcription: {e}")
             self.status_item.title = "Status: Error during transcription"
         finally:
             self.title = "🎙️"  # Reset title
@@ -234,7 +237,7 @@ class WhisperDictationApp(rumps.App):
         if not self.frames:
             self.title = "🎙️"
             self.status_item.title = "Status: No audio recorded"
-            print("No audio recorded")
+            logger.warning("No audio recorded")
             return
             
         # Save the recorded audio to a temporary file
@@ -247,7 +250,7 @@ class WhisperDictationApp(rumps.App):
             wf.setframerate(self.rate)
             wf.writeframes(b''.join(self.frames))
         
-        print(f"Audio saved to temporary file. Transcribing...")
+        logger.debug("Audio saved to temporary file. Transcribing...")
         
         # Transcribe with Whisper
         try:
@@ -260,11 +263,11 @@ class WhisperDictationApp(rumps.App):
             if text:
                 #  What does this look like?
                 selected_text = self.text_selector.get_selected_text()
-                print(f"DEBUG: Selected text: {selected_text}")
+                logger.debug(f"Selected text: {selected_text}")
                 
                 if selected_text and self.bedrock_client.is_available():
-                    print(f"Selected text detected: {selected_text[:50]}...")
-                    print(f"Voice instruction: {text}")
+                    logger.info(f"Selected text detected: {selected_text[:50]}...")
+                    logger.info(f"Voice instruction: {text}")
                     
                     try:
                         # Use Bedrock to enhance the selected text
@@ -273,25 +276,25 @@ class WhisperDictationApp(rumps.App):
                         
                         # Replace selected text with enhanced version
                         self.text_selector.replace_selected_text(enhanced_text)
-                        print(f"Enhanced text: {enhanced_text}")
+                        logger.info(f"Enhanced text: {enhanced_text}")
                         self.status_item.title = f"Status: Enhanced: {enhanced_text[:30]}..."
                         
                     except Exception as e:
-                        print(f"Error enhancing text: {e}")
+                        logger.error(f"Error enhancing text: {e}")
                         # Fallback to normal text insertion
                         self.insert_text(text)
-                        print(f"Transcription (fallback): {text}")
+                        logger.info(f"Transcription (fallback): {text}")
                         self.status_item.title = f"Status: Transcribed: {text[:30]}..."
                 else:
                     # No selected text or Bedrock unavailable - normal insertion
                     self.insert_text(text)
-                    print(f"Transcription: {text}")
+                    logger.info(f"Transcription: {text}")
                     self.status_item.title = f"Status: Transcribed: {text[:30]}..."
             else:
-                print("No speech detected")
+                logger.warning("No speech detected")
                 self.status_item.title = "Status: No speech detected"
         except Exception as e:
-            print(f"Transcription error: {e}")
+            logger.error(f"Transcription error: {e}")
             self.status_item.title = "Status: Transcription error"
             raise
         finally:
@@ -300,9 +303,9 @@ class WhisperDictationApp(rumps.App):
     
     def insert_text(self, text):
         # Type text at cursor position without altering the clipboard
-        print("Typing text at cursor position...")
+        logger.debug("Typing text at cursor position...")
         self.keyboard_controller.type(text)
-        print("Text typed successfully")
+        logger.debug("Text typed successfully")
     
     def handle_shutdown(self, _signal, _frame):
         """This method is no longer used with the global handler approach"""
@@ -313,5 +316,5 @@ if __name__ == "__main__":
     try:
         WhisperDictationApp().run()
     except KeyboardInterrupt:
-        print("\nKeyboard interrupt received, exiting...")
+        logger.info("\nKeyboard interrupt received, exiting...")
         os._exit(0)
