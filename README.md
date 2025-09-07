@@ -10,6 +10,7 @@ A macOS application that converts speech to text using OpenAI's Whisper model ru
 - Global hotkey (Globe/Function key) to trigger dictation
 - Transcribes speech to text using OpenAI's Whisper model locally
 - Automatically pastes transcribed text at your cursor position
+- **NEW**: AI-powered text enhancement - when you have text selected, your voice becomes an instruction to modify that text using AWS Bedrock (Claude)
 - Visual feedback with menu bar icon status
 
 ## Setup and Installation
@@ -26,7 +27,13 @@ pip install -r requirements.txt
 brew install portaudio
 ```
 
-3. Run the application in development mode:
+3. Set up AWS Bedrock (optional - for AI text enhancement):
+```
+cp .env.example .env
+# Edit .env and add your AWS credentials
+```
+
+4. Run the application in development mode:
 ```
 python src/main.py
 ```
@@ -55,6 +62,23 @@ nohup ./run.sh >/dev/null 2>&1 & disown
 4. Press the Globe/Function key again to stop recording.
 5. The app will transcribe your speech and automatically paste it at your current cursor position.
 
+### AI Text Enhancement (New Feature)
+
+When you have AWS Bedrock configured, you can use voice commands to modify selected text:
+
+1. **Select text** in any application (highlight the text you want to modify)
+2. **Press the Globe/Function key** to start recording
+3. **Give a voice instruction** like:
+   - "Make this more professional"
+   - "Translate this to Spanish"
+   - "Summarize this paragraph"
+   - "Fix the grammar"
+   - "Make this sound friendlier"
+4. **Press the Globe/Function key again** to stop recording
+5. The selected text will be **automatically replaced** with the AI-enhanced version
+
+**Note**: If no text is selected, the app behaves normally and just inserts the transcribed text.
+
 You can also interact with the app through the menu bar icon:
 - Click "Start/Stop Listening" to toggle recording
 - Access Settings for configuration options
@@ -72,6 +96,7 @@ The app requires the following permissions:
 
 - macOS 10.14 or later
 - Microphone
+- AWS Account with Bedrock access (optional - for AI text enhancement feature)
 
 ## Troubleshooting
 

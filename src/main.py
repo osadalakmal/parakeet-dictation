@@ -6,12 +6,13 @@ import threading
 import pyaudio
 import wave
 import numpy as np
-import subprocess
 import rumps
 from pynput import keyboard
 from pynput.keyboard import Key, Controller
 import faster_whisper
 import signal
+from text_selection import TextSelection
+from bedrock_client import BedrockClient
 
 # Set up a global flag for handling SIGINT
 exit_flag = False
@@ -22,7 +23,6 @@ def signal_handler(sig, frame):
     print("\nShutdown signal received, exiting gracefully...")
     exit_flag = True
     # Try to force exit if the app doesn't respond quickly
-    import threading
     threading.Timer(2.0, lambda: os._exit(0)).start()
 
 # Register the global signal handlers
@@ -46,6 +46,12 @@ class WhisperDictationApp(rumps.App):
         self.frames = []
         self.keyboard_controller = Controller()
         
+        # Initialize text selection handler
+        self.text_selector = TextSelection()
+        
+        # Initialize Bedrock client
+        self.bedrock_client = BedrockClient()
+        
         # Initialize Whisper model
         self.model = None
         self.load_model_thread = threading.Thread(target=self.load_model)
@@ -68,6 +74,12 @@ class WhisperDictationApp(rumps.App):
         print("You may need to grant this app accessibility permissions in System Preferences.")
         print("Go to System Preferences → Security & Privacy → Privacy → Accessibility")
         print("and add your terminal or the built app to the list.")
+        
+        # Test Bedrock connection
+        if self.bedrock_client.is_available():
+            print("✓ Bedrock client initialized successfully")
+        else:
+            print("⚠ Bedrock client not available - text enhancement features disabled")
         
         # Start a watchdog thread to check for exit flag
         self.watchdog = threading.Thread(target=self.check_exit_flag, daemon=True)
@@ -239,17 +251,42 @@ class WhisperDictationApp(rumps.App):
         
         # Transcribe with Whisper
         try:
-            segments, info = self.model.transcribe(temp_filename, beam_size=5)
+            segments, _ = self.model.transcribe(temp_filename, beam_size=5)
             
             text = ""
             for segment in segments:
                 text += segment.text
             
             if text:
-                # Insert text at cursor position
-                self.insert_text(text)
-                print(f"Transcription: {text}")
-                self.status_item.title = f"Status: Transcribed: {text[:30]}..."
+                #  What does this look like?
+                selected_text = self.text_selector.get_selected_text()
+                print(f"DEBUG: Selected text: {selected_text}")
+                
+                if selected_text and self.bedrock_client.is_available():
+                    print(f"Selected text detected: {selected_text[:50]}...")
+                    print(f"Voice instruction: {text}")
+                    
+                    try:
+                        # Use Bedrock to enhance the selected text
+                        self.status_item.title = "Status: Enhancing text with AI..."
+                        enhanced_text = self.bedrock_client.enhance_text(text, selected_text)
+                        
+                        # Replace selected text with enhanced version
+                        self.text_selector.replace_selected_text(enhanced_text)
+                        print(f"Enhanced text: {enhanced_text}")
+                        self.status_item.title = f"Status: Enhanced: {enhanced_text[:30]}..."
+                        
+                    except Exception as e:
+                        print(f"Error enhancing text: {e}")
+                        # Fallback to normal text insertion
+                        self.insert_text(text)
+                        print(f"Transcription (fallback): {text}")
+                        self.status_item.title = f"Status: Transcribed: {text[:30]}..."
+                else:
+                    # No selected text or Bedrock unavailable - normal insertion
+                    self.insert_text(text)
+                    print(f"Transcription: {text}")
+                    self.status_item.title = f"Status: Transcribed: {text[:30]}..."
             else:
                 print("No speech detected")
                 self.status_item.title = "Status: No speech detected"
@@ -267,7 +304,7 @@ class WhisperDictationApp(rumps.App):
         self.keyboard_controller.type(text)
         print("Text typed successfully")
     
-    def handle_shutdown(self, signal, frame):
+    def handle_shutdown(self, _signal, _frame):
         """This method is no longer used with the global handler approach"""
         pass
 
