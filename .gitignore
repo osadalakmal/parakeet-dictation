@@ -1,2 +1,5 @@
 build
 dist
+.env
+__pycache__
+.vscode/launch.json
