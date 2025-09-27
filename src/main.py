@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os
+import io
 import time
 import tempfile
 import threading
@@ -8,165 +9,171 @@ import wave
 import numpy as np
 import rumps
 from pynput import keyboard
-from pynput.keyboard import Key, Controller
-import faster_whisper
+from pynput.keyboard import Controller
+from parakeet_mlx import from_pretrained
 import signal
 from text_selection import TextSelection
-from bedrock_client import BedrockClient
 from logger_config import setup_logging
 
+# ---------- Logging: default to WARNING (lower overhead), override via env ----------
 logger = setup_logging()
+_log_env = os.getenv("PARAKEET_LOG", "").lower()
+if _log_env in ("debug", "info", "warning", "error", "critical"):
+    import logging as _logging
+    logger.setLevel(getattr(_logging, _log_env.upper()))
+else:
+    # Default to WARNING to reduce hot-path overhead
+    import logging as _logging
+    logger.setLevel(_logging.WARNING)
 
 # Set up a global flag for handling SIGINT
 exit_flag = False
 
-def signal_handler(sig, frame):
+def signal_handler(frame):
     """Global signal handler for graceful shutdown"""
     global exit_flag
     logger.info("Shutdown signal received, exiting gracefully...")
     exit_flag = True
-    # Try to force exit if the app doesn't respond quickly
     threading.Timer(2.0, lambda: os._exit(0)).start()
 
-# Set up graceful shutdown handling for interrupt and termination signals
 signal.signal(signal.SIGINT, signal_handler)
 signal.signal(signal.SIGTERM, signal_handler)
 
 class WhisperDictationApp(rumps.App):
     def __init__(self):
         super(WhisperDictationApp, self).__init__("🎙️", quit_button=rumps.MenuItem("Quit"))
-        
-        # Status item
         self.status_item = rumps.MenuItem("Status: Ready")
-        
-        # Add menu items - use a single menu item for toggling recording
         self.recording_menu_item = rumps.MenuItem("Start Recording")
         self.menu = [self.recording_menu_item, None, self.status_item]
-        
-        # Recording state
+
         self.recording = False
         self.audio = pyaudio.PyAudio()
         self.frames = []
         self.keyboard_controller = Controller()
-        
-        # Initialize text selection handler
         self.text_selector = TextSelection()
-        
-        # Initialize Bedrock client
-        self.bedrock_client = BedrockClient()
-        
-        # Initialize Whisper model
+
+        # Initialize Parakeet model (async)
         self.model = None
-        self.load_model_thread = threading.Thread(target=self.load_model)
+        self.load_model_thread = threading.Thread(target=self.load_model, daemon=True)
         self.load_model_thread.start()
-        
+
         # Audio recording parameters
         self.format = pyaudio.paInt16
         self.channels = 1
         self.rate = 16000
-        self.chunk = 1024
-        
-        # Hotkey configuration - we'll listen for globe/fn key (vk=63)
-        self.trigger_key = 63  # Key code for globe/fn key
+        self.chunk = 512  # smaller chunk -> snappier stop
+
+        # Hotkey state
+        self.is_recording_with_hotkey = False
+
+        # Set up global hotkeys (Ctrl+Alt+A) and release listener
         self.setup_global_monitor()
-        
-        # Show initial message
+
         logger.info("Started WhisperDictation app. Look for 🎙️ in your menu bar.")
-        logger.info("Press and hold the Globe/Fn key (vk=63) to record. Release to transcribe.")
+        logger.info("Press and HOLD Ctrl + Alt + A to record. Release to transcribe.")
         logger.info("Press Ctrl+C to quit the application.")
-        logger.info("You may need to grant this app accessibility permissions in System Preferences.")
-        logger.info("Go to System Preferences → Security & Privacy → Privacy → Accessibility")
-        logger.info("and add your terminal or the built app to the list.")
-        
-        # Test Bedrock connection
-        if self.bedrock_client.is_available():
-            logger.info("✓ Bedrock client initialized successfully")
-        else:
-            logger.warning("⚠ Bedrock client not available - text enhancement features disabled")
-        
-        # Start a watchdog thread to check for exit flag
+        logger.info("If hotkeys don’t fire: System Settings → Privacy & Security → Accessibility + Input Monitoring")
+
         self.watchdog = threading.Thread(target=self.check_exit_flag, daemon=True)
         self.watchdog.start()
-    
+
     def check_exit_flag(self):
-        """Monitor the exit flag and terminate the app when set"""
         while True:
             if exit_flag:
                 logger.info("Watchdog detected exit flag, shutting down...")
                 self.cleanup()
                 rumps.quit_application()
                 os._exit(0)
-                break
             time.sleep(0.5)
-    
+
     def cleanup(self):
-        """Clean up resources before exiting"""
         logger.info("Cleaning up resources...")
-        # Stop recording if in progress
-        if self.recording:
-            self.recording = False
-            if hasattr(self, 'recording_thread') and self.recording_thread.is_alive():
+        self.recording = False
+        if hasattr(self, 'recording_thread') and self.recording_thread.is_alive():
+            try:
                 self.recording_thread.join(timeout=1.0)
-        
-        # Close PyAudio
+            except Exception:
+                pass
         if hasattr(self, 'audio'):
             try:
                 self.audio.terminate()
-            except:
+            except Exception:
                 pass
-    
+
     def load_model(self):
         self.title = "🎙️ (Loading...)"
-        self.status_item.title = "Status: Loading Whisper model..."
+        self.status_item.title = "Status: Loading Parakeet model..."
         try:
-            self.model = faster_whisper.WhisperModel("small.en")
+            model_id = "mlx-community/parakeet-tdt-0.6b-v2"
+            self.model = from_pretrained(model_id)
+
+            # Warm-up: run a tiny silent clip once to trigger JIT/graph compilation & caches
+            try:
+                sr = 16000
+                silence = (np.zeros(int(0.3 * sr)).astype(np.int16)).tobytes()
+                buf = io.BytesIO()
+                with wave.open(buf, 'wb') as wf:
+                    wf.setnchannels(1)
+                    wf.setsampwidth(2)  # int16
+                    wf.setframerate(sr)
+                    wf.writeframes(silence)
+                buf.seek(0)
+                _ = self.model.transcribe(buf)
+                logger.info("Parakeet warm-up done")
+            except Exception as we:
+                logger.debug(f"Warm-up skipped/fallback due to: {we}")
+
             self.title = "🎙️"
             self.status_item.title = "Status: Ready"
-            logger.info("Whisper model loaded successfully!")
+            logger.info("Parakeet model loaded successfully!")
         except Exception as e:
             self.title = "🎙️ (Error)"
             self.status_item.title = "Status: Error loading model"
-            logger.error(f"Error loading model: {e}")
-    
+            logger.error(f"Error loading Parakeet model: {e}")
+
+    # ---------------------------
+    # Global hotkey + release monitor
+    # ---------------------------
     def setup_global_monitor(self):
-        # Create a separate thread to monitor for global key events
-        self.key_monitor_thread = threading.Thread(target=self.monitor_keys)
-        self.key_monitor_thread.daemon = True
+        self.key_monitor_thread = threading.Thread(target=self.monitor_keys, daemon=True)
         self.key_monitor_thread.start()
-    
+
     def monitor_keys(self):
-        # Track state of key 63 (Globe/Fn key)
-        self.is_recording_with_key63 = False
-        
-        def on_press(key):
-            # Removed logging for every key press; log only when target key is pressed
-            if hasattr(key, 'vk') and key.vk == self.trigger_key:
-                logger.debug(f"Target key (vk={key.vk}) pressed")
-        
-        def on_release(key):
-            if hasattr(key, 'vk'):
-                logger.debug(f"Key with vk={key.vk} released")
-                if key.vk == self.trigger_key:
-                    if not self.recording and not self.is_recording_with_key63:
-                        logger.debug(f"Globe/Fn key (vk={key.vk}) released - STARTING recording")
-                        self.is_recording_with_key63 = True
-                        self.start_recording()
-                    elif self.recording and self.is_recording_with_key63:
-                        logger.debug(f"Globe/Fn key (vk={key.vk}) released - STOPPING recording")
-                        self.is_recording_with_key63 = False
-                        self.stop_recording()
-        
+        """
+        Start on '<ctrl>+<alt>+a' press, stop when either Ctrl or Alt is released.
+        Uses GlobalHotKeys for the chord and a separate Listener for modifier releases.
+        """
+        def start():
+            if not self.recording and not self.is_recording_with_hotkey:
+                self.is_recording_with_hotkey = True
+                logger.info("STARTING recording via Ctrl+Alt+A hotkey")
+                self.start_recording()
+
+        def maybe_stop_on_modifier_release(key):
+            from pynput import keyboard as kb
+            if key in (kb.Key.ctrl, kb.Key.ctrl_l, kb.Key.ctrl_r,
+                       kb.Key.alt, kb.Key.alt_l, kb.Key.alt_r):
+                if self.is_recording_with_hotkey and self.recording:
+                    logger.info("STOPPING recording via Ctrl/Alt release")
+                    self.is_recording_with_hotkey = False
+                    self.stop_recording()
+
+        logger.info("Starting global hotkey listener: Ctrl+Alt+A (hold to record)")
         try:
-            with keyboard.Listener(on_press=on_press, on_release=on_release) as listener:
-                logger.debug(f"Keyboard listener started - listening for key events")
-                logger.debug(f"Target key is Globe/Fn key (vk={self.trigger_key})")
-                logger.debug(f"Press and release the target key to control recording")
-                listener.join()
+            with keyboard.GlobalHotKeys({
+                '<ctrl>+<alt>+a': start,   # press to start
+            }) as hotkeys:
+                # Separate listener for key releases
+                with keyboard.Listener(on_release=maybe_stop_on_modifier_release):
+                    hotkeys.join()
         except Exception as e:
-            logger.error(f"Error with keyboard listener: {e}")
-            logger.error("Please check accessibility permissions in System Preferences")
-    
-    @rumps.clicked("Start Recording")  # This will be matched by title
+            logger.error(f"Error with keyboard listeners: {e}")
+            logger.error("Please check Accessibility/Input Monitoring permissions in System Settings.")
+
+    # ---------------------------
+    # Menu item click
+    # ---------------------------
+    @rumps.clicked("Start Recording")
     def toggle_recording(self, sender):
         if not self.recording:
             self.start_recording()
@@ -174,144 +181,157 @@ class WhisperDictationApp(rumps.App):
         else:
             self.stop_recording()
             sender.title = "Start Recording"
-    
+
+    # ---------------------------
+    # Recording & transcription
+    # ---------------------------
     def start_recording(self):
         if not hasattr(self, 'model') or self.model is None:
             logger.warning("Model not loaded. Please wait for the model to finish loading.")
             self.status_item.title = "Status: Waiting for model to load"
             return
-            
+
         self.frames = []
         self.recording = True
-        
-        # Update UI
         self.title = "🎙️ (Recording)"
         self.status_item.title = "Status: Recording..."
         logger.info("Recording started. Speak now...")
-        
-        # Start recording thread
-        self.recording_thread = threading.Thread(target=self.record_audio)
+
+        # Use a callback stream for near-instant stop
+        self.recording_thread = threading.Thread(target=self._record_audio_callback_loop, daemon=True)
         self.recording_thread.start()
-    
+
+    def _record_audio_callback_loop(self):
+        def _cb(in_data, frame_count, time_info, status_flags):
+            # in_data is bytes for paInt16 mono frames
+            if self.recording:
+                self.frames.append(in_data)
+                return (None, pyaudio.paContinue)
+            else:
+                return (None, pyaudio.paComplete)
+
+        stream = self.audio.open(
+            format=self.format,
+            channels=self.channels,
+            rate=self.rate,
+            input=True,
+            frames_per_buffer=self.chunk,
+            stream_callback=_cb
+        )
+        try:
+            stream.start_stream()
+            while stream.is_active():
+                if not self.recording:
+                    break
+                time.sleep(0.01)
+        finally:
+            try:
+                stream.stop_stream()
+            except Exception:
+                pass
+            try:
+                stream.close()
+            except Exception:
+                pass
+
     def stop_recording(self):
+        if not self.recording:
+            return
         self.recording = False
         if hasattr(self, 'recording_thread'):
             self.recording_thread.join()
-        
-        # Update UI
+
         self.title = "🎙️ (Transcribing)"
         self.status_item.title = "Status: Transcribing..."
         logger.info("Recording stopped. Transcribing...")
-        
-        # Process in background
-        transcribe_thread = threading.Thread(target=self.process_recording)
+
+        transcribe_thread = threading.Thread(target=self.process_recording, daemon=True)
         transcribe_thread.start()
-    
+
     def process_recording(self):
-        # Transcribe and insert text
         try:
             self.transcribe_audio()
         except Exception as e:
             logger.error(f"Error during transcription: {e}")
             self.status_item.title = "Status: Error during transcription"
         finally:
-            self.title = "🎙️"  # Reset title
-    
-    def record_audio(self):
-        stream = self.audio.open(
-            format=self.format,
-            channels=self.channels,
-            rate=self.rate,
-            input=True,
-            frames_per_buffer=self.chunk
-        )
-        
-        while self.recording:
-            data = stream.read(self.chunk)
-            self.frames.append(data)
-            
-        stream.stop_stream()
-        stream.close()
-    
+            self.title = "🎙️"
+
+    def _write_wav_to_buffer(self, frames_bytes: bytes) -> io.BytesIO:
+        """Create an in-memory WAV buffer from PCM frames."""
+        buf = io.BytesIO()
+        with wave.open(buf, 'wb') as wf:
+            wf.setnchannels(self.channels)
+            wf.setsampwidth(self.audio.get_sample_size(self.format))
+            wf.setframerate(self.rate)
+            wf.writeframes(frames_bytes)
+        buf.seek(0)
+        return buf
+
     def transcribe_audio(self):
         if not self.frames:
             self.title = "🎙️"
             self.status_item.title = "Status: No audio recorded"
             logger.warning("No audio recorded")
             return
-            
-        # Save the recorded audio to a temporary file
-        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
-            temp_filename = temp_file.name
-        
-        with wave.open(temp_filename, 'wb') as wf:
-            wf.setnchannels(self.channels)
-            wf.setsampwidth(self.audio.get_sample_size(self.format))
-            wf.setframerate(self.rate)
-            wf.writeframes(b''.join(self.frames))
-        
-        logger.debug("Audio saved to temporary file. Transcribing...")
-        
-        # Transcribe with Whisper
+
+        pcm = b''.join(self.frames)
+
+        # Prefer in-memory transcribe (fast); fall back to temp file if needed
+        use_file_fallback = False
         try:
-            segments, _ = self.model.transcribe(temp_filename, beam_size=5)
-            
-            text = ""
-            for segment in segments:
-                text += segment.text
-            
-            if text:
-                #  What does this look like?
-                selected_text = self.text_selector.get_selected_text()
-                logger.debug(f"Selected text: {selected_text}")
-                
-                if selected_text and self.bedrock_client.is_available():
-                    logger.info(f"Selected text detected: {selected_text[:50]}...")
-                    logger.info(f"Voice instruction: {text}")
-                    
-                    try:
-                        # Use Bedrock to enhance the selected text
-                        self.status_item.title = "Status: Enhancing text with AI..."
-                        enhanced_text = self.bedrock_client.enhance_text(text, selected_text)
-                        
-                        # Replace selected text with enhanced version
-                        self.text_selector.replace_selected_text(enhanced_text)
-                        logger.info(f"Enhanced text: {enhanced_text}")
-                        self.status_item.title = f"Status: Enhanced: {enhanced_text[:30]}..."
-                        
-                    except Exception as e:
-                        logger.error(f"Error enhancing text: {e}")
-                        # Fallback to normal text insertion
-                        self.insert_text(text)
-                        logger.info(f"Transcription (fallback): {text}")
-                        self.status_item.title = f"Status: Transcribed: {text[:30]}..."
-                else:
-                    # No selected text or Bedrock unavailable - normal insertion
+            buffer = self._write_wav_to_buffer(pcm)
+            result = self.model.transcribe(buffer)  # many libs accept file-like
+        except Exception as e:
+            logger.debug(f"In-memory transcribe failed ({e}); falling back to temp file")
+            use_file_fallback = True
+
+        if use_file_fallback:
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
+                temp_filename = temp_file.name
+            try:
+                with wave.open(temp_filename, 'wb') as wf:
+                    wf.setnchannels(self.channels)
+                    wf.setsampwidth(self.audio.get_sample_size(self.format))
+                    wf.setframerate(self.rate)
+                    wf.writeframes(pcm)
+                result = self.model.transcribe(temp_filename)
+            finally:
+                try:
+                    os.unlink(temp_filename)
+                except Exception:
+                    pass
+
+        text = (getattr(result, "text", "") or "").strip()
+
+        if text:
+            selected_text = self.text_selector.get_selected_text()
+            bedrock = getattr(self, 'bedrock_client', None)
+
+            if selected_text and bedrock and hasattr(bedrock, 'is_available') and bedrock.is_available():
+                try:
+                    self.status_item.title = "Status: Enhancing text with AI..."
+                    enhanced_text = bedrock.enhance_text(text, selected_text)
+                    self.text_selector.replace_selected_text(enhanced_text)
+                    self.status_item.title = f"Status: Enhanced: {enhanced_text[:30]}..."
+                except Exception as e:
+                    logger.error(f"Error enhancing text: {e}")
                     self.insert_text(text)
-                    logger.info(f"Transcription: {text}")
                     self.status_item.title = f"Status: Transcribed: {text[:30]}..."
             else:
-                logger.warning("No speech detected")
-                self.status_item.title = "Status: No speech detected"
-        except Exception as e:
-            logger.error(f"Transcription error: {e}")
-            self.status_item.title = "Status: Transcription error"
-            raise
-        finally:
-            # Clean up the temporary file
-            os.unlink(temp_filename)
-    
+                self.insert_text(text)
+                self.status_item.title = f"Status: Transcribed: {text[:30]}..."
+        else:
+            logger.warning("No speech detected")
+            self.status_item.title = "Status: No speech detected"
+
     def insert_text(self, text):
-        # Type text at cursor position without altering the clipboard
-        logger.debug("Typing text at cursor position...")
+        # Minimal logging in hot path
         self.keyboard_controller.type(text)
-        logger.debug("Text typed successfully")
-    
+
     def handle_shutdown(self, _signal, _frame):
-        """This method is no longer used with the global handler approach"""
         pass
 
-# Wrap the main execution in a try-except to ensure clean exit
 if __name__ == "__main__":
     try:
         WhisperDictationApp().run()
