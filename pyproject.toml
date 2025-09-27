@@ -18,5 +18,11 @@ dependencies = [
     "tqdm>=4.66",
 ]
 
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-dir]
+"" = "src"
+
 [project.scripts]
-parakeet-dictation = "src.main:main"
+parakeet-dictation = "parakeet_dictation.main:main"
