@@ -332,9 +332,12 @@ class WhisperDictationApp(rumps.App):
     def handle_shutdown(self, _signal, _frame):
         pass
 
-if __name__ == "__main__":
+def main():
     try:
         WhisperDictationApp().run()
     except KeyboardInterrupt:
         logger.info("\nKeyboard interrupt received, exiting...")
         os._exit(0)
+
+if __name__ == "__main__":
+    main()

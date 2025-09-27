@@ -1,0 +1,22 @@
+[project]
+name = "parakeet-dictation"
+version = "0.1.0"
+description = "A dication tool powered by Parakeet"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "audresample>=0.3",
+    "dacite>=1.8",
+    "numba>=0.61.2",
+    "numpy<2.3",
+    "parakeet-mlx>=0.3.6",
+    "pyaudio>=0.2.14",
+    "pynput>=1.8.1",
+    "pyperclip>=1.9.0",
+    "python-dotenv>=1.1.1",
+    "rumps>=0.4.0",
+    "soundfile>=0.12",
+    "tqdm>=4.66",
+]
+
+[project.scripts]
+parakeet-dictation = "src.main:main"
