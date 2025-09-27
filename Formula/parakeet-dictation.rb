@@ -4,7 +4,7 @@ class ParakeetDictation < Formula
   desc "A dictation tool powered by Parakeet"
   homepage "https://github.com/osadalakmal/parakeet-dictation"
   url "https://github.com/osadalakmal/parakeet-dictation/archive/refs/tags/v0.1.0.tar.gz"
-  sha256 "39988aa841dded5f26905480f261f19210d551a5b729a37704281c0f11d0aece"
+  sha256 "b90fff2616144305d2540d21d3b41226d93d6f1f05143307c39c028087e83f74"
   license "MIT"
   revision 2
 
