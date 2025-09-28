@@ -15,15 +15,20 @@ class ParakeetDictation < Formula
   def install
     venv = virtualenv_create(libexec, "python3.12")
 
-    # Native headers/libs for wheels that may build (pyaudio, soundfile)
+    # Make native builds find headers/libs
     ENV.append "CFLAGS", "-I#{Formula["portaudio"].opt_include} -I#{Formula["libsndfile"].opt_include}"
     ENV.append "LDFLAGS", "-L#{Formula["portaudio"].opt_lib} -L#{Formula["libsndfile"].opt_lib}"
 
-    # Upgrade tooling and install WITH dependencies (no --no-deps)
+    # 1) Bootstrap pip inside this venv (since it was created --without-pip)
+    system libexec/"bin/python3.12", "-m", "ensurepip", "--upgrade"
+
+    # 2) Upgrade packaging tools
     system libexec/"bin/pip", "install", "--upgrade", "pip", "setuptools", "wheel"
+
+    # 3) Install YOUR package WITH dependencies (no --no-deps)
     system libexec/"bin/pip", "install", buildpath
 
-    # Link console script
+    # 4) Expose the console script
     bin.install_symlink libexec/"bin/parakeet-dictation"
   end
 
