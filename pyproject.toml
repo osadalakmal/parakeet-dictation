@@ -5,11 +5,6 @@ description = "A dication tool powered by Parakeet"
 readme = "README.md"
 license = { text = "MIT" }
 requires-python = ">=3.12,<3.13"
-
-[build-system]
-requires = ["setuptools>=68", "wheel"]
-build-backend = "setuptools.build_meta"
-
 dependencies = [
     "parakeet-mlx",
     "soundfile>=0.12",
@@ -26,6 +21,10 @@ dependencies = [
     # macOS-only Cocoa bridge
     'pyobjc-framework-Cocoa~=11.1; platform_system == "Darwin"',
 ]
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
 
 [project.scripts]
 parakeet-dictation = "parakeet_dictation.main:main"
