@@ -42,5 +42,6 @@ class ParakeetDictation < Formula
     system "#{libexec}/bin/python3.12", "-c", "import parakeet_dictation.main as m; print(m.__file__)"
     system "#{bin}/parakeet-dictation", "--help"
   end
+
 end
 
