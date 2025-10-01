@@ -12,8 +12,18 @@ from pynput import keyboard
 from pynput.keyboard import Controller
 from parakeet_mlx import from_pretrained
 import signal
-from text_selection import TextSelection
-from logger_config import setup_logging
+try:
+    from .text_selection import TextSelection
+    from .logger_config import setup_logging
+except ImportError:
+    from text_selection import TextSelection
+    from logger_config import setup_logging
+
+try:
+    from mlx_lm import load as mlx_load, generate as mlx_generate
+except Exception:
+    mlx_load = None
+    mlx_generate = None
 
 # ---------- Logging: default to WARNING (lower overhead), override via env ----------
 logger = setup_logging()
@@ -22,14 +32,13 @@ if _log_env in ("debug", "info", "warning", "error", "critical"):
     import logging as _logging
     logger.setLevel(getattr(_logging, _log_env.upper()))
 else:
-    # Default to WARNING to reduce hot-path overhead
     import logging as _logging
     logger.setLevel(_logging.WARNING)
 
 # Set up a global flag for handling SIGINT
 exit_flag = False
 
-def signal_handler(frame):
+def signal_handler(signum, frame):  # FIXED: accept (signum, frame)
     """Global signal handler for graceful shutdown"""
     global exit_flag
     logger.info("Shutdown signal received, exiting gracefully...")
@@ -56,6 +65,19 @@ class WhisperDictationApp(rumps.App):
         self.model = None
         self.load_model_thread = threading.Thread(target=self.load_model, daemon=True)
         self.load_model_thread.start()
+
+        # NEW: Initialize Qwen (MLX) editor model (async)
+        self.llm_model = None
+        self.llm_tokenizer = None
+        self.llm_ready = False
+        self.llm_config = {
+            "model_id": os.getenv("PARAKEET_LLM_MODEL", "mlx-community/Qwen2.5-1.5B-Instruct-4bit"),
+            "max_tokens": int(os.getenv("PARAKEET_LLM_MAX_TOKENS", "192")),
+            "temperature": float(os.getenv("PARAKEET_LLM_TEMP", "0.2")),
+            "top_p": float(os.getenv("PARAKEET_LLM_TOP_P", "0.9")),
+        }
+        self.load_llm_thread = threading.Thread(target=self.load_llm, daemon=True)
+        self.load_llm_thread.start()
 
         # Audio recording parameters
         self.format = pyaudio.paInt16
@@ -130,6 +152,30 @@ class WhisperDictationApp(rumps.App):
             self.title = "🎙️ (Error)"
             self.status_item.title = "Status: Error loading model"
             logger.error(f"Error loading Parakeet model: {e}")
+
+    # NEW: Load Qwen (MLX) LLM editor
+    def load_llm(self):
+        if mlx_load is None or mlx_generate is None:
+            logger.warning("mlx-lm not installed; local LLM edits disabled. `pip install mlx-lm` to enable.")
+            return
+        try:
+            logger.info(f"Loading Qwen MLX model: {self.llm_config['model_id']}")
+            # Many Qwen MLX models need trust_remote_code; eos token is usually set in tokenizer config.
+            self.llm_model, self.llm_tokenizer = mlx_load(
+                self.llm_config["model_id"],
+                tokenizer_config={"trust_remote_code": True},
+            )
+            # Warm-up to prime kernels/caches
+            try:
+                _ = self.enhance_with_qwen("return the same text", "warmup")
+                logger.info("Qwen MLX warm-up done")
+            except Exception as we:
+                logger.debug(f"Qwen warm-up skipped due to: {we}")
+            self.llm_ready = True
+            logger.info("Qwen MLX model ready for local edits")
+        except Exception as e:
+            logger.error(f"Failed to load Qwen MLX model: {e}")
+            self.llm_ready = False
 
     # ---------------------------
     # Global hotkey + release monitor
@@ -306,19 +352,25 @@ class WhisperDictationApp(rumps.App):
 
         if text:
             selected_text = self.text_selector.get_selected_text()
-            bedrock = getattr(self, 'bedrock_client', None)
 
-            if selected_text and bedrock and hasattr(bedrock, 'is_available') and bedrock.is_available():
+            # NEW: If there is selected text and local Qwen is ready → treat spoken text as instruction
+            if selected_text and self.llm_ready:
                 try:
-                    self.status_item.title = "Status: Enhancing text with AI..."
-                    enhanced_text = bedrock.enhance_text(text, selected_text)
-                    self.text_selector.replace_selected_text(enhanced_text)
-                    self.status_item.title = f"Status: Enhanced: {enhanced_text[:30]}..."
+                    self.status_item.title = "Status: Editing selection with Qwen..."
+                    edited = self.enhance_with_qwen(text, selected_text)
+                    if edited:
+                        self.text_selector.replace_selected_text(edited)
+                        self.status_item.title = f"Status: Edited: {edited[:30]}..."
+                    else:
+                        # Fallback to inserting raw transcription if model returned nothing
+                        self.insert_text(text)
+                        self.status_item.title = f"Status: Transcribed: {text[:30]}..."
                 except Exception as e:
-                    logger.error(f"Error enhancing text: {e}")
+                    logger.error(f"Qwen edit error: {e}")
                     self.insert_text(text)
                     self.status_item.title = f"Status: Transcribed: {text[:30]}..."
             else:
+                # No selection or LLM not ready → normal dictation insert
                 self.insert_text(text)
                 self.status_item.title = f"Status: Transcribed: {text[:30]}..."
         else:
@@ -328,6 +380,38 @@ class WhisperDictationApp(rumps.App):
     def insert_text(self, text):
         # Minimal logging in hot path
         self.keyboard_controller.type(text)
+
+    # NEW: Local edit using Qwen (MLX)
+    def enhance_with_qwen(self, instruction: str, text: str) -> str:
+        """
+        Use local Qwen (MLX) to apply `instruction` to `text`.
+        Returns edited text (no explanations).
+        """
+        if not (self.llm_model and self.llm_tokenizer):
+            return ""
+
+        system = "You are a local text editor. Apply the instruction precisely. Output only the edited text with no explanations."
+        messages = [
+            {"role": "system", "content": system},
+            {"role": "user", "content": f"Instruction: {instruction}\nText:\n<<<\n{text}\n>>>"},
+        ]
+
+        # Try chat template; fallback to a simple prompt if unavailable
+        try:
+            prompt = self.llm_tokenizer.apply_chat_template(messages, add_generation_prompt=True)
+        except Exception:
+            prompt = f"{system}\n\nInstruction: {instruction}\nText:\n<<<\n{text}\n>>>\n\nEdited:"
+
+        out = mlx_generate(
+            self.llm_model,
+            self.llm_tokenizer,
+            prompt=prompt,
+            max_tokens=self.llm_config["max_tokens"],
+            temperature=self.llm_config["temperature"],
+            top_p=self.llm_config["top_p"],
+            verbose=False,
+        )
+        return (out or "").strip()
 
     def handle_shutdown(self, _signal, _frame):
         pass
