@@ -3,7 +3,7 @@ import pyperclip
 import time
 from AppKit import NSPasteboard, NSStringPboardType
 from pynput.keyboard import Key, Controller
-from logger_config import setup_logging
+from .logger_config import setup_logging
 
 logger = setup_logging()
 
@@ -32,7 +32,7 @@ class TextSelection:
             
             # Small delay to ensure copy operation completes
             time.sleep(0.2)
-            
+
             # Get the copied text
             selected_text = pyperclip.paste()
             logger.debug(f"Copied text: {selected_text}")

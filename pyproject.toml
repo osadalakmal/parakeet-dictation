@@ -1,6 +1,6 @@
 [project]
 name = "parakeet-dictation"
-version = "0.1.3"
+version = "0.1.4"
 description = "A dication tool powered by Parakeet"
 readme = "README.md"
 license = { text = "MIT" }
@@ -18,8 +18,10 @@ dependencies = [
     "numba>=0.61.2",
     "pyperclip~=1.9.0",
     "python-dotenv~=1.1.1",
+    "mlx-lm",
     # macOS-only Cocoa bridge
     'pyobjc-framework-Cocoa~=11.1; platform_system == "Darwin"',
+    "pyobjc-framework-cocoa~=11.1",
 ]
 
 [build-system]

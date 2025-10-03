@@ -12,18 +12,13 @@ from pynput import keyboard
 from pynput.keyboard import Controller
 from parakeet_mlx import from_pretrained
 import signal
-try:
-    from .text_selection import TextSelection
-    from .logger_config import setup_logging
-except ImportError:
-    from text_selection import TextSelection
-    from logger_config import setup_logging
+from .text_selection import TextSelection
+from .logger_config import setup_logging
+from mlx_lm import load as mlx_load, generate as mlx_generate
+import argparse
 
-try:
-    from mlx_lm import load as mlx_load, generate as mlx_generate
-except Exception:
-    mlx_load = None
-    mlx_generate = None
+# Set HuggingFace tokenizers parallelism warning off
+os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
 # ---------- Logging: default to WARNING (lower overhead), override via env ----------
 logger = setup_logging()
@@ -323,30 +318,21 @@ class WhisperDictationApp(rumps.App):
 
         pcm = b''.join(self.frames)
 
-        # Prefer in-memory transcribe (fast); fall back to temp file if needed
-        use_file_fallback = False
+        # Always use temp file for transcription (model does not support BytesIO)
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
+            temp_filename = temp_file.name
         try:
-            buffer = self._write_wav_to_buffer(pcm)
-            result = self.model.transcribe(buffer)  # many libs accept file-like
-        except Exception as e:
-            logger.debug(f"In-memory transcribe failed ({e}); falling back to temp file")
-            use_file_fallback = True
-
-        if use_file_fallback:
-            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as temp_file:
-                temp_filename = temp_file.name
+            with wave.open(temp_filename, 'wb') as wf:
+                wf.setnchannels(self.channels)
+                wf.setsampwidth(self.audio.get_sample_size(self.format))
+                wf.setframerate(self.rate)
+                wf.writeframes(pcm)
+            result = self.model.transcribe(temp_filename)
+        finally:
             try:
-                with wave.open(temp_filename, 'wb') as wf:
-                    wf.setnchannels(self.channels)
-                    wf.setsampwidth(self.audio.get_sample_size(self.format))
-                    wf.setframerate(self.rate)
-                    wf.writeframes(pcm)
-                result = self.model.transcribe(temp_filename)
-            finally:
-                try:
-                    os.unlink(temp_filename)
-                except Exception:
-                    pass
+                os.unlink(temp_filename)
+            except Exception:
+                pass
 
         text = (getattr(result, "text", "") or "").strip()
 
@@ -385,38 +371,62 @@ class WhisperDictationApp(rumps.App):
     def enhance_with_qwen(self, instruction: str, text: str) -> str:
         """
         Use local Qwen (MLX) to apply `instruction` to `text`.
-        Returns edited text (no explanations).
+        Returns edited text (no explanations, no wrappers).
         """
+        logger.debug(f"Enhancing with Qwen | instruction: {instruction}")
         if not (self.llm_model and self.llm_tokenizer):
             return ""
 
-        system = "You are a local text editor. Apply the instruction precisely. Output only the edited text with no explanations."
+        system = (
+            "You are a local text editor. Apply the instruction precisely. "
+            "Output only the final edited text, with no extra formatting, no brackets, no explanations, and no wrappers."
+        )
         messages = [
             {"role": "system", "content": system},
-            {"role": "user", "content": f"Instruction: {instruction}\nText:\n<<<\n{text}\n>>>"},
+            {"role": "user", "content": f"Instruction: {instruction}\nText:\n{text}"},
         ]
 
         # Try chat template; fallback to a simple prompt if unavailable
         try:
             prompt = self.llm_tokenizer.apply_chat_template(messages, add_generation_prompt=True)
+            logger.debug("got prompt from llm tokenizer chat template")
         except Exception:
-            prompt = f"{system}\n\nInstruction: {instruction}\nText:\n<<<\n{text}\n>>>\n\nEdited:"
-
+            prompt = f"{system}\n\nInstruction: {instruction}\nText:\n{text}\n\nEdited:"
+            logger.debug("got prompt from simple chat template")
+        logger.debug(prompt)
         out = mlx_generate(
             self.llm_model,
             self.llm_tokenizer,
             prompt=prompt,
             max_tokens=self.llm_config["max_tokens"],
-            temperature=self.llm_config["temperature"],
-            top_p=self.llm_config["top_p"],
             verbose=False,
         )
-        return (out or "").strip()
+        logger.debug("Qwen output is " + str(out))
+        return self._clean_llm_output(out)
+
+    def _clean_llm_output(self, out: str) -> str:
+        """
+        Remove any <<<...>>> wrappers or similar from LLM output.
+        """
+        if not out:
+            return ""
+        # Remove <<< ... >>> wrappers
+        import re
+        cleaned = re.sub(r"^\s*<<<(.*?)>>>\s*/?s?\s*$", r"\1", out.strip(), flags=re.DOTALL)
+        # Remove any remaining brackets or slashes
+        cleaned = cleaned.strip().strip('<>').strip('/s').strip()
+        return cleaned
 
     def handle_shutdown(self, _signal, _frame):
         pass
 
 def main():
+    parser = argparse.ArgumentParser(
+        description="Parakeet Dictation: Speech-to-text and local LLM text editing for macOS.\n\nINSTRUCTIONS:\n\n- After launching, look for the 🎙️ icon in your macOS menu bar.\n- Press and HOLD Ctrl + Alt + A to start dictation. Release to transcribe.\n- If you select text before dictating, your spoken command will be used as an edit instruction for the selected text (requires local LLM).\n- If hotkeys do not work, check System Settings → Privacy & Security → Accessibility and Input Monitoring.\n- To quit, use the menu bar or press Ctrl+C in the terminal.\n- For more info, see: https://github.com/osadalakmal/parakeet-dictation\n\nOPTIONS:"
+    )
+    parser.add_argument('--version', action='version', version='parakeet-dictation 0.1.0')
+    args = parser.parse_args()
+
     try:
         WhisperDictationApp().run()
     except KeyboardInterrupt:
